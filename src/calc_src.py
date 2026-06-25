@@ -2,6 +2,8 @@ import numpy as np
 from numba import float64, int64, njit, prange, void
 from numba.types import Tuple  # type: ignore
 
+from plot_utils import plot_coincidence_events
+
 
 @njit(void(int64))
 def seed_env(seed: int) -> None:
@@ -164,4 +166,15 @@ def label_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
 
 
 if __name__ == "__main__":
-    pass
+    seed_env(10)
+    set_t_1 = f_1(500_000, 50.0, 1.0, 3.0)
+    set_t_2 = f_1(500_000, 50.0, 0.1, 3.0)
+    set_t = f_2(set_t_1, set_t_2)
+    set_t_1, set_t_2 = f_3(set_t)
+    taus = f_4(set_t_1, set_t_2, 250.0)
+    hist, bpp = f_5(taus, 10_000, 50.0)
+    side_peaks_i, tau_zero_i = f_6(hist, bpp)
+    g2_zero = f_7(hist, bpp, side_peaks_i, tau_zero_i)
+
+    print(g2_zero)
+    plot_coincidence_events(taus, 10_000)
