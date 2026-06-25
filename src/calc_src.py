@@ -18,6 +18,7 @@ def f_1(exp_N: int, T_ns: float, eff: float, lifetime_ns: float) -> np.ndarray:
     else:
         sum = -1
         for i in range(exp_N):
+            # geometric distribution to find the number of pulses for next emission
             sum += np.floor(np.log(np.random.random()) / np.log(1.0 - eff)) + 1
             set_t[i] = sum * T_ns - lifetime_ns * np.log(np.random.random())
 
@@ -97,6 +98,7 @@ def f_5(taus: np.ndarray, bins: int, T_ns: float) -> tuple[np.ndarray, float]:
 
 @njit(Tuple((int64[:], int64))(int64[:], float64))
 def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
+    # potential peak if bin is larger than neighbours and above threshold height
     side_peaks_i = (
         np.where(
             (hist[1:-1] > hist[2:])
@@ -105,6 +107,7 @@ def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
         )[0]
         + 1
     )
+    # peaks should be roughly size of pulses apart
     side_peaks_i = side_peaks_i[
         np.concat((np.full(1, True), np.diff(side_peaks_i) > np.floor(bpp * 0.9)))
     ]
@@ -116,6 +119,7 @@ def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
 def f_7(
     hist: np.ndarray, bpp: float, side_peaks_i: np.ndarray, tau_zero_i: int
 ) -> float:
+    # g^2(0) = area of peak at tau = 0 / average area of side peaks
     areas = np.empty(len(side_peaks_i))
     for i in range(len(side_peaks_i)):
         areas[i] = hist[side_peaks_i[i] - bpp // 2 : side_peaks_i[i] + bpp // 2].sum()
