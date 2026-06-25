@@ -12,11 +12,14 @@ def seed_env(seed: int) -> None:
 def f_1(exp_N: int, T_ns: float, eff: float, lifetime_ns: float) -> np.ndarray:
     set_t = np.empty(exp_N, dtype=np.float64)
     if eff == 1.0:
+        # alternative: np.arange(1, exp_N + 1) * T_ns - lifetime_ns * np.log(np.random.random(exp_N))
+        # but i didn't want to allocate another array to perform the vector operation
         for i in range(exp_N):
             set_t[i] = (i + 1) * T_ns - lifetime_ns * np.log(np.random.random())
     else:
         sum = 0
         for i in range(exp_N):
+            # geometric distribution to get the number of pulses needed for an emission
             sum += np.floor(np.log(np.random.random()) / np.log(1.0 - eff)) + 1
             set_t[i] = sum * T_ns - lifetime_ns * np.log(np.random.random())
 
@@ -29,6 +32,8 @@ def f_2(set_t_1: np.ndarray, set_t_2: np.ndarray) -> np.ndarray:
     i = 0
     j = 0
 
+    # merging the 2 arrays of arrival times in ascending order
+    # compiled np.sort was taking 10s for some reason
     for k in range(len(set_t)):
         if i == len(set_t_1):
             set_t[k:] = set_t_2[j:]
@@ -56,6 +61,11 @@ def f_3(set_t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 @njit(float64[:](float64[:], float64[:], float64))
 def f_4(set_t_1: np.ndarray, set_t_2: np.ndarray, half_window_ns: float) -> np.ndarray:
+    # alternative:
+    # starts = np.searchsorted(set_t_2, set_t_1 - half_window_ns, side="left")
+    # ends = np.searchsorted(set_t_2, set_t_1 + half_window_ns, side="right")
+    # size = (ends - starts).sum()
+    # this is one extra temporary array allocation, this is also slower because searchsorted does not exploit strictly increasing sets
     starts = np.empty(len(set_t_1), dtype=np.int64)
     ends = np.empty(len(set_t_1), dtype=np.int64)
 
@@ -89,11 +99,14 @@ def f_4(set_t_1: np.ndarray, set_t_2: np.ndarray, half_window_ns: float) -> np.n
 @njit(Tuple((int64[:], float64))(float64[:], int64, float64))
 def f_5(taus: np.ndarray, bins: int, T_ns: float) -> tuple[np.ndarray, float]:
     hist, edges = np.histogram(taus, bins=bins)
+    # second return is bins per period
     return hist, np.floor(T_ns / (edges[1] - edges[0]))
 
 
 @njit(Tuple((int64[:], int64))(int64[:], float64))
 def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
+    # potential peak if a bin is larger than the bins to its left and right
+    # and also at least 80% of max
     side_peaks_i = (
         np.where(
             (hist[1:-1] > hist[2:])
@@ -102,10 +115,12 @@ def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
         )[0]
         + 1
     )
+    # peaks should also be at least bins per period apart
     side_peaks_i = side_peaks_i[
         np.concat((np.full(1, True), np.diff(side_peaks_i) > np.floor(bpp * 0.9)))
     ]
 
+    # first and last indices removed because they are indices of partially formed peaks
     return side_peaks_i[1:-1], len(hist) // 2
 
 
@@ -113,6 +128,7 @@ def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
 def f_7(
     hist: np.ndarray, bpp: float, side_peaks_i: np.ndarray, tau_zero_i: int
 ) -> float:
+    # g^2(0) = area of center peak / average area of side peaks
     areas = np.empty(len(side_peaks_i))
     for i in range(len(side_peaks_i)):
         areas[i] = hist[side_peaks_i[i] - bpp // 2 : side_peaks_i[i] + bpp // 2].sum()
@@ -145,3 +161,7 @@ def label_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
         g2_zeros[i] = f_7(hist, bpp, side_peaks_i, tau_zero_i)
 
     return g2_zeros
+
+
+if __name__ == "__main__":
+    pass
