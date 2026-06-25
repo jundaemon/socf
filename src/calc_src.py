@@ -2,8 +2,6 @@ import numpy as np
 from numba import float64, int64, njit, prange, void
 from numba.types import Tuple  # type: ignore
 
-from plot_utils import plot_coincidence_events
-
 
 @njit(void(int64))
 def seed_env(seed: int) -> None:
@@ -12,16 +10,14 @@ def seed_env(seed: int) -> None:
 
 @njit(float64[:](int64, float64, float64, float64))
 def f_1(exp_N: int, T_ns: float, eff: float, lifetime_ns: float) -> np.ndarray:
+    # the vectorized version of this is comparable in speed but uses twice the memory
     set_t = np.empty(exp_N, dtype=np.float64)
     if eff == 1.0:
-        # alternative: np.arange(1, exp_N + 1) * T_ns - lifetime_ns * np.log(np.random.random(exp_N))
-        # but i didn't want to allocate another array to perform the vector operation
         for i in range(exp_N):
-            set_t[i] = (i + 1) * T_ns - lifetime_ns * np.log(np.random.random())
+            set_t[i] = i * T_ns - lifetime_ns * np.log(np.random.random())
     else:
-        sum = 0
+        sum = -1
         for i in range(exp_N):
-            # geometric distribution to get the number of pulses needed for an emission
             sum += np.floor(np.log(np.random.random()) / np.log(1.0 - eff)) + 1
             set_t[i] = sum * T_ns - lifetime_ns * np.log(np.random.random())
 
@@ -34,8 +30,7 @@ def f_2(set_t_1: np.ndarray, set_t_2: np.ndarray) -> np.ndarray:
     i = 0
     j = 0
 
-    # merging the 2 arrays of arrival times in ascending order
-    # compiled np.sort was taking 10s for some reason
+    # didn't use compiled np.sort because it was taking 10s to sort a size 1_000_000 array
     for k in range(len(set_t)):
         if i == len(set_t_1):
             set_t[k:] = set_t_2[j:]
@@ -63,14 +58,10 @@ def f_3(set_t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 @njit(float64[:](float64[:], float64[:], float64))
 def f_4(set_t_1: np.ndarray, set_t_2: np.ndarray, half_window_ns: float) -> np.ndarray:
-    # alternative:
-    # starts = np.searchsorted(set_t_2, set_t_1 - half_window_ns, side="left")
-    # ends = np.searchsorted(set_t_2, set_t_1 + half_window_ns, side="right")
-    # size = (ends - starts).sum()
-    # this is one extra temporary array allocation, this is also slower because searchsorted does not exploit strictly increasing sets
     starts = np.empty(len(set_t_1), dtype=np.int64)
     ends = np.empty(len(set_t_1), dtype=np.int64)
 
+    # faster than np.searchsorted because this exploits sets being sorted thus not resetting indices
     size = 0
     ptr_1 = 0
     ptr_2 = 0
@@ -101,14 +92,11 @@ def f_4(set_t_1: np.ndarray, set_t_2: np.ndarray, half_window_ns: float) -> np.n
 @njit(Tuple((int64[:], float64))(float64[:], int64, float64))
 def f_5(taus: np.ndarray, bins: int, T_ns: float) -> tuple[np.ndarray, float]:
     hist, edges = np.histogram(taus, bins=bins)
-    # second return is bins per period
     return hist, np.floor(T_ns / (edges[1] - edges[0]))
 
 
 @njit(Tuple((int64[:], int64))(int64[:], float64))
 def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
-    # potential peak if a bin is larger than the bins to its left and right
-    # and also at least 80% of max
     side_peaks_i = (
         np.where(
             (hist[1:-1] > hist[2:])
@@ -117,12 +105,10 @@ def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
         )[0]
         + 1
     )
-    # peaks should also be at least bins per period apart
     side_peaks_i = side_peaks_i[
         np.concat((np.full(1, True), np.diff(side_peaks_i) > np.floor(bpp * 0.9)))
     ]
 
-    # first and last indices removed because they are indices of partially formed peaks
     return side_peaks_i[1:-1], len(hist) // 2
 
 
@@ -130,7 +116,6 @@ def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
 def f_7(
     hist: np.ndarray, bpp: float, side_peaks_i: np.ndarray, tau_zero_i: int
 ) -> float:
-    # g^2(0) = area of center peak / average area of side peaks
     areas = np.empty(len(side_peaks_i))
     for i in range(len(side_peaks_i)):
         areas[i] = hist[side_peaks_i[i] - bpp // 2 : side_peaks_i[i] + bpp // 2].sum()
@@ -138,10 +123,7 @@ def f_7(
     return hist[tau_zero_i - bpp // 2 : tau_zero_i + bpp // 2].sum() / areas.mean()
 
 
-@njit(
-    float64[:](float64[:], float64[:], int64),
-    parallel=True,
-)
+@njit(float64[:](float64[:], float64[:], int64), parallel=True)
 def label_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
     g2_zeros = np.empty(len(eff_1s), dtype=np.float64)
 
@@ -152,7 +134,7 @@ def label_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
     bins = 10_000
     seed_env(seed)
 
-    for i in prange(len(g2_zeros)):  # type: ignore
+    for i in prange(len(eff_1s)):  # type: ignore
         set_t_1 = f_1(exp_N, T_ns, eff_1s[i], lifetime_ns)
         set_t_2 = f_1(exp_N, T_ns, eff_2s[i], lifetime_ns)
         set_t = f_2(set_t_1, set_t_2)
@@ -165,16 +147,28 @@ def label_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
     return g2_zeros
 
 
-if __name__ == "__main__":
-    seed_env(10)
-    set_t_1 = f_1(500_000, 50.0, 1.0, 3.0)
-    set_t_2 = f_1(500_000, 50.0, 0.1, 3.0)
-    set_t = f_2(set_t_1, set_t_2)
-    set_t_1, set_t_2 = f_3(set_t)
-    taus = f_4(set_t_1, set_t_2, 250.0)
-    hist, bpp = f_5(taus, 10_000, 50.0)
-    side_peaks_i, tau_zero_i = f_6(hist, bpp)
-    g2_zero = f_7(hist, bpp, side_peaks_i, tau_zero_i)
+@njit(int64[:, :](float64[:], float64[:], int64), parallel=True)
+def sample_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
+    histograms = np.empty((len(eff_1s), 500), dtype=np.int64)
 
-    print(g2_zero)
-    plot_coincidence_events(taus, 10_000)
+    exp_N = 50
+    T_ns = 50.0
+    lifetime_ns = 3.0
+    half_window_ns = 250.0
+    bins = 500
+    seed_env(seed)
+
+    for i in prange(len(eff_1s)):  # type: ignore
+        set_t_1 = f_1(exp_N, T_ns, eff_1s[i], lifetime_ns)
+        set_t_2 = f_1(exp_N, T_ns, eff_2s[i], lifetime_ns)
+        set_t = f_2(set_t_1, set_t_2)
+        set_t_1, set_t_2 = f_3(set_t)
+        taus = f_4(set_t_1, set_t_2, half_window_ns)
+        hist, _ = f_5(taus, bins, T_ns)
+        histograms[i,] = hist
+
+    return histograms
+
+
+if __name__ == "__main__":
+    pass
