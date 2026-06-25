@@ -2,4 +2,4 @@ JIT compiled Monte Carlo simulation of the [Hanbury Brown & Twiss experiment](ht
 
 ![image](./assets/Figure_1.png)
 
-$\tau$ = 0.1551189260997424
+$g^2(0)$ = 0.1551189260997424
