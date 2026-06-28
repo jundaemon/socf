@@ -10,7 +10,6 @@ def seed_env(seed: int) -> None:
 
 @njit(float64[:](int64, float64, float64, float64))
 def f_1(exp_N: int, T_ns: float, eff: float, lifetime_ns: float) -> np.ndarray:
-    # the vectorized version of this is comparable in speed but uses twice the memory
     set_t = np.empty(exp_N, dtype=np.float64)
     if eff == 1.0:
         for i in range(exp_N):
@@ -18,7 +17,7 @@ def f_1(exp_N: int, T_ns: float, eff: float, lifetime_ns: float) -> np.ndarray:
     else:
         sum = -1
         for i in range(exp_N):
-            # geometric distribution to find the number of pulses for next emission
+            # solving geometric distribution to find the number of pulses for next emission
             sum += np.floor(np.log(np.random.random()) / np.log(1.0 - eff)) + 1
             set_t[i] = sum * T_ns - lifetime_ns * np.log(np.random.random())
 
@@ -31,7 +30,7 @@ def f_2(set_t_1: np.ndarray, set_t_2: np.ndarray) -> np.ndarray:
     i = 0
     j = 0
 
-    # didn't use compiled np.sort because it was taking 10s to sort a size 1_000_000 array
+    # merge
     for k in range(len(set_t)):
         if i == len(set_t_1):
             set_t[k:] = set_t_2[j:]
@@ -62,10 +61,10 @@ def f_4(set_t_1: np.ndarray, set_t_2: np.ndarray, half_window_ns: float) -> np.n
     starts = np.empty(len(set_t_1), dtype=np.int64)
     ends = np.empty(len(set_t_1), dtype=np.int64)
 
-    # faster than np.searchsorted because this exploits sets being sorted thus not resetting indices
     size = 0
     ptr_1 = 0
     ptr_2 = 0
+    # one way sliding window
     for i in range(len(set_t_1)):
         while ptr_1 < len(set_t_2) and set_t_2[ptr_1] < set_t_1[i] - half_window_ns:
             ptr_1 += 1
@@ -96,23 +95,12 @@ def f_5(taus: np.ndarray, bins: int, T_ns: float) -> tuple[np.ndarray, float]:
     return hist, np.floor(T_ns / (edges[1] - edges[0]))
 
 
-@njit(Tuple((int64[:], int64))(int64[:], float64))
-def f_6(hist: np.ndarray, bpp: float) -> tuple[np.ndarray, int]:
-    # potential peak if bin is larger than neighbours and above threshold height
-    side_peaks_i = (
-        np.where(
-            (hist[1:-1] > hist[2:])
-            & (hist[1:-1] > hist[:-2])
-            & (hist[1:-1] > hist.max() * 0.8)
-        )[0]
-        + 1
-    )
-    # peaks should be roughly size of pulses apart
-    side_peaks_i = side_peaks_i[
-        np.concat((np.full(1, True), np.diff(side_peaks_i) > np.floor(bpp * 0.9)))
-    ]
+@njit(Tuple((int64[:], int64))(int64, float64))
+def f_6(bins: int, bpp: float) -> tuple[np.ndarray, int]:
+    side_peaks_i = np.arange(bpp, bins, bpp, dtype=np.int64)
+    side_peaks_i = side_peaks_i[side_peaks_i != bins // 2]
 
-    return side_peaks_i[1:-1], len(hist) // 2
+    return side_peaks_i, bins // 2
 
 
 @njit(float64(int64[:], float64, int64[:], int64))
@@ -145,7 +133,7 @@ def label_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
         set_t_1, set_t_2 = f_3(set_t)
         taus = f_4(set_t_1, set_t_2, half_window_ns)
         hist, bpp = f_5(taus, bins, T_ns)
-        side_peaks_i, tau_zero_i = f_6(hist, bpp)
+        side_peaks_i, tau_zero_i = f_6(bins, bpp)
         g2_zeros[i] = f_7(hist, bpp, side_peaks_i, tau_zero_i)
 
     return g2_zeros
