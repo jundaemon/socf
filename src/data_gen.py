@@ -152,7 +152,7 @@ def label_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
 
 
 @njit(int64[:, :](float64[:], float64[:], int64), parallel=True)
-def sample_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
+def input_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
     histograms = np.empty((len(eff_1s), 500), dtype=np.int64)
 
     exp_N = 50
@@ -172,7 +172,3 @@ def sample_gen(eff_1s: np.ndarray, eff_2s: np.ndarray, seed: int) -> np.ndarray:
         histograms[i,] = hist
 
     return histograms
-
-
-if __name__ == "__main__":
-    pass
